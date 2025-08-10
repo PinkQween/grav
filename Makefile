@@ -9,12 +9,32 @@ ARCH ?= $(shell uname -m)
 # We now have GLFW installed for both architectures:
 # - arm64: /opt/homebrew (Apple Silicon Homebrew)
 # - x86_64: /usr/local (Intel Homebrew via Rosetta)
+# Added fallback paths for CI environments
 ifeq ($(ARCH),arm64)
-    CFLAGS = -std=c++11 -arch arm64 -I/opt/homebrew/include
-    LDFLAGS = -arch arm64 -L/opt/homebrew/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit
+    # Primary paths for arm64
+    ARM64_INCLUDE_PATHS = -I/opt/homebrew/include
+    ARM64_LIB_PATHS = -L/opt/homebrew/lib
+    # Fallback paths
+    ifneq ($(HOMEBREW_PREFIX),)
+        ARM64_INCLUDE_PATHS += -I$(HOMEBREW_PREFIX)/include
+        ARM64_LIB_PATHS += -L$(HOMEBREW_PREFIX)/lib
+    endif
+    CFLAGS = -std=c++11 -arch arm64 $(ARM64_INCLUDE_PATHS)
+    LDFLAGS = -arch arm64 $(ARM64_LIB_PATHS) -lglfw -framework Cocoa -framework OpenGL -framework IOKit
 else ifeq ($(ARCH),x86_64)
-    CFLAGS = -std=c++11 -arch x86_64 -I/usr/local/include
-    LDFLAGS = -arch x86_64 -L/usr/local/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit
+    # Primary paths for x86_64
+    X86_INCLUDE_PATHS = -I/usr/local/include
+    X86_LIB_PATHS = -L/usr/local/lib
+    # Fallback paths for CI environments
+    ifneq ($(HOMEBREW_PREFIX),)
+        X86_INCLUDE_PATHS += -I$(HOMEBREW_PREFIX)/include
+        X86_LIB_PATHS += -L$(HOMEBREW_PREFIX)/lib
+    endif
+    # Additional common locations
+    X86_INCLUDE_PATHS += -I/usr/local/Cellar/glfw/*/include
+    X86_LIB_PATHS += -L/usr/local/Cellar/glfw/*/lib
+    CFLAGS = -std=c++11 -arch x86_64 $(X86_INCLUDE_PATHS)
+    LDFLAGS = -arch x86_64 $(X86_LIB_PATHS) -lglfw -framework Cocoa -framework OpenGL -framework IOKit
 else
     # Fallback to native architecture homebrew paths
     ifeq ($(shell uname -m),arm64)

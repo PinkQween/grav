@@ -20,6 +20,8 @@ jobs:
     - name: Setup Dependencies
       run: |
         echo "🚀 Setting up dependencies for ${{ matrix.arch }} build..."
+        echo "Runner architecture: $(uname -m)"
+        echo "Target architecture: ${{ matrix.arch }}"
         
         # GitHub Actions runners are typically x86_64, but we need both Homebrews
         # Install Apple Silicon Homebrew for arm64 builds
@@ -35,6 +37,10 @@ jobs:
           echo "📦 Installing GLFW for arm64..."
           /opt/homebrew/bin/brew install glfw || echo "GLFW may already be installed"
           
+          echo "🔍 Verifying arm64 GLFW installation:"
+          ls -la /opt/homebrew/include/ | grep GLFW || echo "GLFW headers not found"
+          ls -la /opt/homebrew/lib/ | grep glfw || echo "GLFW library not found"
+          
         else
           # Install Intel Homebrew for x86_64 builds
           if [ ! -d "/usr/local/Homebrew" ]; then
@@ -43,7 +49,20 @@ jobs:
           fi
           
           echo "📦 Installing GLFW for x86_64..."
-          /usr/local/bin/brew install glfw || brew install glfw
+          /usr/local/bin/brew install glfw || brew install glfw || {
+            echo "❌ Failed to install GLFW, trying fallback method..."
+            # Try installing with arch prefix
+            arch -x86_64 /usr/local/bin/brew install glfw
+          }
+          
+          echo "🔍 Verifying x86_64 GLFW installation:"
+          ls -la /usr/local/include/ | grep GLFW || echo "GLFW headers not found"
+          ls -la /usr/local/lib/ | grep glfw || echo "GLFW library not found"
+          
+          # Check if pkg-config can find GLFW
+          if command -v pkg-config &> /dev/null; then
+            pkg-config --cflags --libs glfw3 || echo "pkg-config cannot find GLFW"
+          fi
         fi
     
     - name: Build for ${{ matrix.arch }}
