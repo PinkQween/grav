@@ -4,3 +4,4 @@ Grav.app/
 .DS_Store
 dist/
 build/
+*.zip
