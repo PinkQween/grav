@@ -32,18 +32,46 @@ jobs:
           # Install Rosetta 2 for x86_64 emulation
           sudo softwareupdate --install-rosetta --agree-to-license || echo "Rosetta already installed"
           
-          # Install x86_64 Homebrew under Rosetta
-          echo "Installing x86_64 Homebrew..."
-          arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || echo "x86_64 Homebrew may already exist"
+          # Create directories for manual installation
+          sudo mkdir -p /usr/local/{include,lib,bin}
+          sudo chown -R $(whoami) /usr/local
           
-          # Install GLFW for x86_64
-          echo "Installing x86_64 GLFW..."
-          arch -x86_64 /usr/local/bin/brew install glfw
+          # Download and build GLFW from source for x86_64
+          echo "Downloading and building GLFW from source for x86_64..."
+          
+          # Download GLFW source
+          curl -L https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip -o glfw.zip
+          unzip glfw.zip
+          cd glfw-3.4
+          
+          # Build for x86_64
+          mkdir build-x86_64
+          cd build-x86_64
+          
+          arch -x86_64 cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DGLFW_BUILD_EXAMPLES=OFF \
+            -DGLFW_BUILD_TESTS=OFF \
+            -DGLFW_BUILD_DOCS=OFF
+            
+          arch -x86_64 make -j$(sysctl -n hw.logicalcpu)
+          make install
+          
+          cd ../..
+          rm -rf glfw-3.4 glfw.zip
           
           # Verify x86_64 GLFW installation
           echo "🔍 Verifying x86_64 GLFW:"
           if [ -f "/usr/local/lib/libglfw.dylib" ]; then
             echo "x86_64 GLFW architecture: $(lipo -info /usr/local/lib/libglfw.dylib)"
+            ls -la /usr/local/lib/ | grep glfw
+            ls -la /usr/local/include/ | grep GLFW || echo "Headers check"
+          else
+            echo "❌ x86_64 GLFW not found"
+            ls -la /usr/local/lib/ | grep glfw || echo "No GLFW files found"
+            exit 1
           fi
           
         else
