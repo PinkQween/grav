@@ -1,0 +1,137 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [x86_64, arm64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install dependencies
+      run: |
+        # Install Homebrew if not present
+        if ! command -v brew &> /dev/null; then
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+        
+        # Install clang++ and glfw for the specific architecture
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          arch -arm64 brew install glfw
+        else
+          arch -x86_64 brew install glfw
+        fi
+    
+    - name: Build for ${{ matrix.arch }}
+      run: |
+        # Set architecture-specific compiler and linker flags
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          export CFLAGS="-arch arm64 -I/opt/homebrew/include"
+          export LDFLAGS="-arch arm64 -L/opt/homebrew/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit"
+          export CC="clang++ -arch arm64"
+        else
+          export CFLAGS="-arch x86_64 -I/usr/local/include"
+          export LDFLAGS="-arch x86_64 -L/usr/local/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit"
+          export CC="clang++ -arch x86_64"
+        fi
+        
+        # Create output directory
+        mkdir -p build/${{ matrix.arch }}
+        
+        # Build the application
+        $CC main.cpp $CFLAGS $LDFLAGS -o build/${{ matrix.arch }}/grav
+        
+        # Create app bundle for macOS
+        mkdir -p build/${{ matrix.arch }}/Grav.app/Contents/MacOS
+        mkdir -p build/${{ matrix.arch }}/Grav.app/Contents/Resources
+        
+        # Copy binary and resources
+        cp build/${{ matrix.arch }}/grav build/${{ matrix.arch }}/Grav.app/Contents/MacOS/
+        cp -r Resources/* build/${{ matrix.arch }}/Grav.app/Contents/Resources/ 2>/dev/null || true
+        cp Info.plist build/${{ matrix.arch }}/Grav.app/Contents/ 2>/dev/null || true
+        
+        # Create a zip archive for distribution
+        cd build/${{ matrix.arch }}
+        zip -r ../../grav-${{ matrix.arch }}.zip Grav.app
+        cd ../..
+        
+        # Also create a standalone binary zip
+        zip grav-${{ matrix.arch }}-binary.zip build/${{ matrix.arch }}/grav
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: grav-${{ matrix.arch }}
+        path: |
+          grav-${{ matrix.arch }}.zip
+          grav-${{ matrix.arch }}-binary.zip
+    
+    - name: Create Release (if on main/master)
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ github.run_number }}-${{ github.sha }}
+        name: "Grav Build ${{ github.run_number }}"
+        body: |
+          Automated build from commit ${{ github.sha }}
+          
+          ## Downloads
+          - **Apple Silicon (M1/M2/M3 Macs)**: `grav-arm64.zip` or `grav-arm64-binary.zip`
+          - **Intel Macs**: `grav-x86_64.zip` or `grav-x86_64-binary.zip`
+          
+          ## Installation
+          1. Download the appropriate zip file for your Mac architecture
+          2. Extract the zip file
+          3. For the app bundle (.app), drag to Applications folder
+          4. For the binary, place in your PATH or run directly
+        files: |
+          grav-${{ matrix.arch }}.zip
+          grav-${{ matrix.arch }}-binary.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  combine-release:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: Create Universal Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ github.run_number }}-universal
+        name: "Grav Universal Build ${{ github.run_number }}"
+        body: |
+          Universal build from commit ${{ github.sha }}
+          
+          This release contains binaries for both Apple Silicon and Intel Macs.
+          
+          ## Downloads
+          - **Apple Silicon (M1/M2/M3 Macs)**: Download files containing `arm64`
+          - **Intel Macs**: Download files containing `x86_64`
+          
+          ## Installation
+          1. Download the appropriate zip file for your Mac architecture
+          2. Extract the zip file
+          3. For the app bundle (.app), drag to Applications folder
+          4. For the binary, place in your PATH or run directly
+        files: |
+          grav-arm64/*.zip
+          grav-x86_64/*.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
