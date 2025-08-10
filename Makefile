@@ -36,7 +36,7 @@ $(APP_NAME).app/Contents/MacOS/$(BINARY): $(SRC) $(RESOURCES) $(PLIST)
 	@killall grav || true
 	@mkdir -p $(APP_NAME).app/Contents/MacOS
 	@mkdir -p $(APP_NAME).app/Contents/Resources
-	clang++ $(SRC) $(CFLAGS) $(LDFLAGS) -o $(APP_NAME).app/Contents/MacOS/$(BINARY)
+	clang++ $(SRC) -std=c++11 $(CFLAGS) $(LDFLAGS) -o $(APP_NAME).app/Contents/MacOS/$(BINARY)
 
 	# Copy the icon files and resources
 	@cp -r $(RESOURCES)* $(APP_NAME).app/Contents/Resources/
