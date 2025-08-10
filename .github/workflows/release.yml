@@ -23,7 +23,8 @@ jobs:
         if ! command -v brew &> /dev/null; then
           /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
         fi
-        arch -arm64 brew install glfw
+        arch -arm64 brew install glfw    
+        arch -arm64 brew install glm
     
     - name: Build for arm64
       run: |
