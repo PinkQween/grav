@@ -2,113 +2,104 @@
 #include <GLFW/glfw3.h>
 #include <OpenGL/gl.h>
 #include <stdio.h>
-#include <math.h>
+#include <cmath>
 #include <vector>
 #include <iostream>
-#include <cmath>
+
+const int WINDOW_WIDTH = 800 * 1.5;
+const int WINDOW_HEIGHT = 600 * 1.5;
+
+// Use a scaled distance system:
+// Scale all planet distances so Neptune fits around 90% of window width.
+const double REAL_NEPTUNE_DISTANCE_M = 4.495e12;            // meters (4.495 billion km)
+const float MAX_ORBIT_RADIUS_PIXELS = WINDOW_WIDTH * 0.45f; // max radius for Neptune orbit in pixels
+
+// Calculate a scale factor so Neptune’s orbit fits on screen
+// Removed *400 for realistic scaling
+const double DISTANCE_SCALE = REAL_NEPTUNE_DISTANCE_M / MAX_ORBIT_RADIUS_PIXELS; // meters per pixel
 
 class Object
 {
 private:
     std::vector<float> position = {400, 300};
     std::vector<float> velocity = {0, 0};
-    float framerate = 1 / 60;
 
 public:
-    bool Initalizing = false;
-    bool Launched = false;
     std::vector<float> hue = {1.0f, 1.0f, 1.0f, 1.0f};
-    float mass;
-    float density = 0.08375; // kg / m^3  HYDROGEN
-    float radius; // Will be calculated after mass is set
+    double mass;
+    double density = 1400.0; // kg/m^3 approx for planets
 
-    Object(std::vector<float> initPosition, std::vector<float> initVelocity, float mass)
+    Object(std::vector<float> initPosition, std::vector<float> initVelocity, double mass, std::vector<float> color)
+        : position(initPosition), velocity(initVelocity), mass(mass), hue(color) {}
+
+    void UpdatePos(double timestep)
     {
-        this->position = initPosition;
-        this->velocity = initVelocity;
-        this->mass = mass;
+        position[0] += velocity[0] * timestep;
+        position[1] += velocity[1] * timestep;
     }
 
-    void UpdatePos()
+    std::vector<float> GetCoord() const
     {
-        this->position[0] += this->velocity[0] / 94;
-        this->position[1] += this->velocity[1] / 94;
+        return position;
     }
-    void Velocity(float x, float y)
+
+    float GetRadius() const
     {
-        this->velocity[0] *= x;
-        this->velocity[1] *= y;
+        double volume = mass / density;
+        double radiusMeters = pow((3.0 * volume) / (4.0 * M_PI), 1.0 / 3.0);
+
+        const double SUN_SCALE_FACTOR = 5e6;
+        const double PLANET_SCALE_FACTOR = 1e6;
+
+        double radiusPixels;
+        if (mass > 1e29)
+        {
+            radiusPixels = radiusMeters / SUN_SCALE_FACTOR;
+            const double MAX_SUN_RADIUS = 250.0;
+            if (radiusPixels > MAX_SUN_RADIUS)
+                radiusPixels = MAX_SUN_RADIUS;
+        }
+        else
+        {
+            radiusPixels = radiusMeters / PLANET_SCALE_FACTOR;
+            const double MIN_PLANET_RADIUS = 6.0;
+            if (radiusPixels < MIN_PLANET_RADIUS)
+                radiusPixels = MIN_PLANET_RADIUS;
+        }
+
+        return (float)radiusPixels;
     }
-    void SetVel(float x, float y)
+
+    void Draw() const
     {
-        this->velocity = {x, y};
-    }
-    std::vector<float> GetCoord()
-    {
-        std::vector<float> xy = {this->position[0], this->position[1]};
-        return xy;
-    }
-    float GetRadius()
-    {
-        float volume = this->mass / this->density;
-        return pow(((3 * volume) / (4 * 3.14159265359)), (1.0f / 3.0f));
-    }
-    void Draw()
-    {
-        float volume = this->mass / this->density;
-        float radius = pow(((3 * volume) / (4 * 3.14159265359)), (1.0f / 3.0f));
-        float x = this->position[0];
-        float y = this->position[1];
-        glColor4f(this->hue[0], this->hue[1], this->hue[2], this->hue[3]);
+        float radius = GetRadius();
+        float x = position[0];
+        float y = position[1];
+        glColor4f(hue[0], hue[1], hue[2], hue[3]);
         glBegin(GL_TRIANGLE_FAN);
         glVertex2f(x, y);
-        int numSegments = 100;
+        int numSegments = 40;
         for (int i = 0; i <= numSegments; ++i)
         {
-            float angle = 2.0f * 3.14159265359f * float(i) / float(numSegments);
+            float angle = 2.0f * 3.14159265359f * i / numSegments;
             float dx = radius * cosf(angle);
             float dy = radius * sinf(angle);
             glVertex2f(x + dx, y + dy);
         }
         glEnd();
-    };
-    void CheckBoundry(int bottom, int top, int left, int right)
-    {
-        float radius = pow(((3 * (this->mass / this->density)) / (4 * 3.14159265359)), (1.0f / 3.0f));
-        if (this->position[1] < bottom + radius || this->position[1] > top - radius)
-        {
-            this->position[1] = this->position[1] < bottom + radius ? bottom + radius : top - radius;
-            this->velocity[1] *= -0.8f;
-        }
-        if (this->position[0] < left + radius || this->position[0] > right - radius)
-        {
-            this->position[0] = this->position[0] < left + radius ? left + radius : right - radius;
-            this->velocity[0] *= -0.8f;
-        }
-    }
-    void CheckCollision(std::vector<Object> &objs)
-    {
-        for (auto &obj2 : objs)
-        {
-            if (&obj2 == this)
-                continue;
-            float dx = obj2.GetCoord()[0] - this->position[0];
-            float dy = obj2.GetCoord()[1] - this->position[1];
-            float distance = sqrt(dx * dx + dy * dy);
-            if (distance < this->GetRadius() + obj2.GetRadius())
-            {
-                obj2.Velocity(1, -1);
-                this->velocity[1] *= -1;
-            }
-        }
     }
 
-    void accelerate(float x, float y)
+    void accelerate(double ax, double ay, double timestep)
     {
-        this->velocity[0] += x;
-        this->velocity[1] += y;
+        velocity[0] += (float)(ax * timestep);
+        velocity[1] += (float)(ay * timestep);
     }
 };
+
+double orbitalVelocity(double G, double centralMass, double distanceMeters)
+{
+    return sqrt(G * centralMass / distanceMeters);
+}
 
 int main(void)
 {
@@ -118,107 +109,144 @@ int main(void)
         return -1;
     }
 
-    GLFWwindow *window = glfwCreateWindow(800, 600, "Grav", NULL, NULL);
+    GLFWwindow *window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Solar System Simulation", NULL, NULL);
     if (!window)
     {
         glfwTerminate();
         return -1;
     }
-
     glfwMakeContextCurrent(window);
 
-    // Get the actual window size
-    int windowWidth, windowHeight;
-    glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
-    
-    // Define screen dimensions for compatibility
-    int screenWidth = windowWidth;
-    int screenHeight = windowHeight;
-    
-    float radius = 50.0f;
-    int res = 100;
-
-    std::vector<float> position = {
-        400.0f, 300.0f, // Center of the circle
-    };
-
-    std::vector<Object> objs = {
-        Object({screenWidth / 3.0f, screenHeight / 2.0f}, {0.0f, 150.0f}, 4000.0f),        // Initial object
-        Object({screenWidth / 3.0f * 2.0f, screenHeight / 2.0f}, {0.0f, 0.0f}, 5000.0f), // Another object for interaction
-    };
-
-    // Set up the viewport
-    glViewport(0, 0, windowWidth, windowHeight);
+    glViewport(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glOrtho(0, windowWidth, windowHeight, 0, -1, 1);
+    glOrtho(0, WINDOW_WIDTH, WINDOW_HEIGHT, 0, -1, 1);
+
+    const double G = 6.67430e-11;         // gravitational constant
+    const double TIME_STEP = 3600.0 * 24 * 365.24 / 12; // 1 average month per timestep (seconds)
+
+    double sunMass = 1.989e30;
+
+    // Fixed sun position at center of window
+    const float sunX = WINDOW_WIDTH / 2.0f;
+    const float sunY = WINDOW_HEIGHT / 2.0f;
+
+    // Create Sun fixed at center
+    Object sun({sunX, sunY}, {0.0f, 0.0f}, sunMass, {1.0f, 1.0f, 0.0f, 1.0f});
+    float sunRadius = sun.GetRadius();
+
+    struct PlanetInfo
+    {
+        double distanceKm;
+        double mass;
+        std::vector<float> color;
+    };
+
+    std::vector<PlanetInfo> planetInfos = {
+        {57.9e6, 3.285e23, {0.6f, 0.6f, 0.6f, 1.0f}},   // Mercury
+        {108.2e6, 4.867e24, {1.0f, 0.5f, 0.0f, 1.0f}},  // Venus
+        {149.6e6, 5.972e24, {0.0f, 0.5f, 1.0f, 1.0f}},  // Earth
+        {227.9e6, 6.39e23, {1.0f, 0.2f, 0.2f, 1.0f}},   // Mars
+        {778.5e6, 1.898e27, {1.0f, 0.7f, 0.4f, 1.0f}},  // Jupiter
+        {1.433e9, 5.683e26, {1.0f, 1.0f, 0.7f, 1.0f}},  // Saturn
+        {2.8725e9, 8.681e25, {0.5f, 1.0f, 1.0f, 1.0f}}, // Uranus
+        {4.495e9, 1.024e26, {0.2f, 0.4f, 1.0f, 1.0f}}   // Neptune
+    };
+
+    // Sort planets ascending by distance (optional)
+    std::sort(planetInfos.begin(), planetInfos.end(),
+              [](const PlanetInfo &a, const PlanetInfo &b)
+              {
+                  return a.distanceKm < b.distanceKm;
+              });
+
+    float lastOrbitRadius = sunRadius + 20.0f;
+    std::vector<Object> planets;
+
+    for (const auto &p : planetInfos)
+    {
+        double distanceMeters = p.distanceKm * 1000.0;
+        float distancePixels = (float)(distanceMeters / DISTANCE_SCALE);
+
+        Object tempPlanet({0, 0}, {0, 0}, p.mass, p.color);
+        float planetRadiusPixels = tempPlanet.GetRadius();
+
+        float minOrbitRadius = lastOrbitRadius + planetRadiusPixels + 10.0f;
+        if (distancePixels < minOrbitRadius)
+            distancePixels = minOrbitRadius;
+
+        lastOrbitRadius = distancePixels;
+
+        double distanceForVelocityMeters = distancePixels * DISTANCE_SCALE;
+        double velMag = orbitalVelocity(G, sunMass, distanceForVelocityMeters);
+        // No artificial velocity scale here for realism:
+        double velPixels = velMag / DISTANCE_SCALE;
+
+        float posX = sunX + distancePixels;
+        float posY = sunY;
+
+        // velocity perpendicular to radius vector (circular orbit)
+        float rx = posX - sunX;
+        float ry = posY - sunY;
+        float rLen = sqrt(rx * rx + ry * ry);
+        rx /= rLen;
+        ry /= rLen;
+
+        float velX = -ry * (float)velPixels;
+        float velY = rx * (float)velPixels;
+
+        planets.push_back(Object({posX, posY}, {velX, velY}, p.mass, p.color));
+    }
 
     while (!glfwWindowShouldClose(window))
     {
+        int windowWidth, windowHeight;
+        glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
+
+        glViewport(0, 0, windowWidth, windowHeight);
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(0, windowWidth, windowHeight, 0, -1, 1);
+
+        glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        for (auto &obj : objs)
+        // Draw Sun fixed at center
+        sun.Draw();
+
+        // Update gravitational acceleration & position of planets
+        for (auto &planet : planets)
         {
-            obj.Draw();
-            obj.UpdatePos();
-            // obj gravity
-            for (auto &obj2 : objs)
-            {
-                float dx = (obj2.GetCoord()[0] - obj.GetCoord()[0]);
-                float dy = (obj2.GetCoord()[1] - obj.GetCoord()[1]);
-                float distance = std::sqrt(dx * dx + dy * dy);
-                if (distance != 0)
-                {
-                    std::vector<float> direction = {(obj2.GetCoord()[0] - obj.GetCoord()[0]) / distance, (obj2.GetCoord()[1] - obj.GetCoord()[1]) / distance};
+            auto pos = planet.GetCoord();
 
-                    obj.accelerate(direction[0], direction[1]);
-                }
-            }
-            // gravity
-            // obj.accelerate(0, -9.6);
-            if (obj.Initalizing)
-            {
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            float dx = sunX - pos[0];
+            float dy = sunY - pos[1];
+            float dist_pixels = sqrt(dx * dx + dy * dy);
 
-                double xpos, ypos;
-                glfwGetCursorPos(window, &xpos, &ypos);
-                ypos = screenHeight - ypos;
-                obj.Velocity(0, 0);
-                // target line
-                glColor4f(1.0f, 0.4f, 0.4f, 0.2f);
-                glLineWidth(2.0f);
-                glBegin(GL_LINES);
+            if (dist_pixels < 1.0f)
+                continue;
 
-                glVertex2d(xpos, ypos);
-                glVertex2d(obj.GetCoord()[0], obj.GetCoord()[1]);
+            double dist_meters = dist_pixels * DISTANCE_SCALE;
 
-                float radius = pow(((3 * (obj.mass / obj.density)) / (4 * 3.14159265359)), (1.0f / 3.0f));
+            // Calculate acceleration magnitude (m/s²)
+            double acc = G * sunMass / (dist_meters * dist_meters);
+            // Convert acceleration to pixels per second²
+            float acc_pixels = (float)(acc / DISTANCE_SCALE);
 
-                // init mass
-                if (xpos < obj.GetCoord()[0] + radius && xpos > obj.GetCoord()[0] - radius && ypos < obj.GetCoord()[1] + radius && ypos > obj.GetCoord()[1] - radius)
-                {
-                    obj.mass *= 1.05;
-                }
-                glEnd();
-            }
-            if (obj.Launched)
-            {
-                obj.Launched = false;
-                double xpos, ypos;
-                glfwGetCursorPos(window, &xpos, &ypos);
-                ypos = screenHeight - ypos;
-                float dx = (xpos - obj.GetCoord()[0]);
-                float dy = (ypos - obj.GetCoord()[1]);
-                float distance = std::sqrt(dx * dx + dy * dy);
-                if (distance != 0)
-                {
-                    std::vector<float> direction = {(float(xpos) - obj.GetCoord()[0]) * distance * 0.01f, (float(ypos) - obj.GetCoord()[1]) * distance * 0.01f};
-                    obj.SetVel(-direction[0], -direction[1]);
-                }
-            }
-            obj.CheckBoundry(0, screenHeight, 0, screenWidth);
-            obj.CheckCollision(objs);
+            float dir_x = dx / dist_pixels;
+            float dir_y = dy / dist_pixels;
+
+            float ax = dir_x * acc_pixels;
+            float ay = dir_y * acc_pixels;
+
+            planet.accelerate(ax, ay, TIME_STEP);
+        }
+
+        for (auto &planet : planets)
+        {
+            planet.UpdatePos(TIME_STEP);
+            planet.Draw();
         }
 
         glfwSwapBuffers(window);
