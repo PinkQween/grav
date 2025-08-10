@@ -23,65 +23,69 @@ jobs:
         echo "Runner architecture: $(uname -m)"
         echo "Target architecture: ${{ matrix.arch }}"
         
-        # GitHub Actions runners are typically x86_64, but we need both Homebrews
-        # Install Apple Silicon Homebrew for arm64 builds
-        if [ "${{ matrix.arch }}" = "arm64" ]; then
-          # Install Apple Silicon Homebrew if not present
-          if [ ! -d "/opt/homebrew" ]; then
-            echo "📦 Installing Apple Silicon Homebrew..."
-            sudo mkdir -p /opt/homebrew
-            sudo chown -R $(whoami) /opt/homebrew
-            curl -L https://github.com/Homebrew/brew/tarball/master | tar xz --strip 1 -C /opt/homebrew
-          fi
-          
-          echo "📦 Installing GLFW for arm64..."
-          /opt/homebrew/bin/brew install glfw || echo "GLFW may already be installed"
-          
-          echo "🔍 Verifying arm64 GLFW installation:"
-          ls -la /opt/homebrew/include/ | grep GLFW || echo "GLFW headers not found"
-          ls -la /opt/homebrew/lib/ | grep glfw || echo "GLFW library not found"
-          
-        else
-          # Install Intel Homebrew for x86_64 builds
-          if [ ! -d "/usr/local/Homebrew" ]; then
-            echo "📦 Installing Intel Homebrew..."
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          fi
-          
-          echo "📦 Installing GLFW for x86_64..."
-          /usr/local/bin/brew install glfw || brew install glfw || {
-            echo "❌ Failed to install GLFW, trying fallback method..."
-            # Try installing with arch prefix
-            arch -x86_64 /usr/local/bin/brew install glfw
-          }
-          
-          echo "🔍 Verifying x86_64 GLFW installation:"
-          ls -la /usr/local/include/ | grep GLFW || echo "GLFW headers not found"
-          ls -la /usr/local/lib/ | grep glfw || echo "GLFW library not found"
-          
-          # Check if pkg-config can find GLFW
-          if command -v pkg-config &> /dev/null; then
-            pkg-config --cflags --libs glfw3 || echo "pkg-config cannot find GLFW"
-          fi
+        # GitHub Actions macos-latest now uses Apple Silicon runners
+        # So Homebrew will be at /opt/homebrew by default
+        
+        # Install GLFW using the default Homebrew
+        echo "📦 Installing GLFW..."
+        brew install glfw
+        
+        # Verify installation 
+        echo "🔍 Verifying GLFW installation:"
+        ls -la /opt/homebrew/include/ | grep GLFW || echo "GLFW headers not found"
+        ls -la /opt/homebrew/lib/ | grep glfw || echo "GLFW library not found"
+        
+        # Check which architecture GLFW was built for
+        if [ -f "/opt/homebrew/lib/libglfw.dylib" ]; then
+          echo "GLFW architecture: $(lipo -info /opt/homebrew/lib/libglfw.dylib)"
         fi
     
     - name: Build for ${{ matrix.arch }}
       run: |
         echo "🔨 Building for ${{ matrix.arch }}..."
         
-        # Use the Makefile which handles all the architecture-specific logic
-        make clean
-        make ARCH=${{ matrix.arch }}
+        # For x86_64 builds on Apple Silicon CI runners, we need special handling
+        if [ "${{ matrix.arch }}" = "x86_64" ] && [ "$(uname -m)" = "arm64" ]; then
+          echo "💻 Building x86_64 on Apple Silicon runner - using manual compilation..."
+          
+          # Build manually for x86_64 using available arm64 headers but cross-compiling
+          mkdir -p Grav.app/Contents/MacOS
+          mkdir -p Grav.app/Contents/Resources
+          
+          clang++ main.cpp \
+            -std=c++11 \
+            -arch x86_64 \
+            -I/opt/homebrew/include \
+            -L/opt/homebrew/lib \
+            -lglfw \
+            -framework Cocoa \
+            -framework OpenGL \
+            -framework IOKit \
+            -o Grav.app/Contents/MacOS/grav || {
+            echo "❌ x86_64 build with GLFW failed, trying system frameworks only..."
+            
+            # If GLFW linking fails, we might need to build without it for CI
+            echo "This indicates a CI environment limitation."
+            exit 1
+          }
+          
+          # Copy resources
+          cp -r Resources/* Grav.app/Contents/Resources/ 2>/dev/null || echo "No resources to copy"
+          cp Info.plist Grav.app/Contents/ 2>/dev/null || echo "No Info.plist to copy"
+          
+        else
+          # Use the Makefile for other cases
+          make clean
+          make ARCH=${{ matrix.arch }}
+        fi
         
         # Verify the build
         echo "🔍 Verifying build:"
         file Grav.app/Contents/MacOS/grav
         
         # Create distribution package
-        make package ARCH=${{ matrix.arch }}
-        
-        # Also create a standalone binary package
         mkdir -p dist
+        zip -r dist/grav-${{ matrix.arch }}.zip Grav.app
         zip -j dist/grav-${{ matrix.arch }}-binary.zip Grav.app/Contents/MacOS/grav
     
     - name: Upload build artifacts
@@ -157,48 +161,48 @@ jobs:
   build-universal:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     runs-on: macos-latest
+    needs: build-and-release
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Setup Dependencies for Universal Build
-      run: |
-        echo "🌍 Setting up dependencies for universal build..."
-        
-        # Install both Homebrews for universal build
-        # Apple Silicon Homebrew
-        if [ ! -d "/opt/homebrew" ]; then
-          echo "📦 Installing Apple Silicon Homebrew..."
-          sudo mkdir -p /opt/homebrew
-          sudo chown -R $(whoami) /opt/homebrew
-          curl -L https://github.com/Homebrew/brew/tarball/master | tar xz --strip 1 -C /opt/homebrew
-        fi
-        /opt/homebrew/bin/brew install glfw || echo "GLFW arm64 may already be installed"
-        
-        # Intel Homebrew
-        if [ ! -d "/usr/local/Homebrew" ]; then
-          echo "📦 Installing Intel Homebrew..."
-          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        fi
-        /usr/local/bin/brew install glfw || brew install glfw || echo "GLFW x86_64 may already be installed"
-    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      
     - name: Build Universal Binary
       run: |
-        echo "🌍 Building universal binary..."
+        echo "🌍 Creating universal binary from individual builds..."
         
-        # Use the Makefile's universal target
-        make universal
+        # Extract both architecture binaries
+        echo "Extracting arm64 binary..."
+        unzip -j grav-arm64/grav-arm64-binary.zip -d arm64/
         
-        # Verify it's actually universal
-        echo "🔍 Verifying universal build:"
+        echo "Extracting x86_64 binary..."
+        unzip -j grav-x86_64/grav-x86_64-binary.zip -d x86_64/
+        
+        # Create universal binary using lipo
+        mkdir -p Grav.app/Contents/MacOS
+        mkdir -p Grav.app/Contents/Resources
+        
+        echo "Creating universal binary..."
+        lipo -create -output Grav.app/Contents/MacOS/grav \
+          arm64/grav \
+          x86_64/grav
+        
+        # Copy resources
+        cp -r Resources/* Grav.app/Contents/Resources/ 2>/dev/null || echo "No resources to copy"
+        cp Info.plist Grav.app/Contents/ 2>/dev/null || echo "No Info.plist to copy"
+        
+        # Verify it's universal
+        echo "🔍 Verifying universal binary:"
         lipo -info Grav.app/Contents/MacOS/grav
         
         # Package universal build
-        make package-universal
-        
-        # Create standalone universal binary
         mkdir -p dist
+        zip -r dist/grav-universal.zip Grav.app
         zip -j dist/grav-universal-binary.zip Grav.app/Contents/MacOS/grav
+        
+        echo "✅ Universal binary created successfully"
     
     - name: Upload universal artifacts
       uses: actions/upload-artifact@v4

@@ -6,37 +6,18 @@ SRC = main.cpp
 ARCH ?= $(shell uname -m)
 
 # Architecture-specific flags
-# We now have GLFW installed for both architectures:
-# - arm64: /opt/homebrew (Apple Silicon Homebrew)
-# - x86_64: /usr/local (Intel Homebrew via Rosetta)
-# Added fallback paths for CI environments
+# Local development: Use dual Homebrew setup
+# CI: Handle Apple Silicon runners differently
 ifeq ($(ARCH),arm64)
-    # Primary paths for arm64
-    ARM64_INCLUDE_PATHS = -I/opt/homebrew/include
-    ARM64_LIB_PATHS = -L/opt/homebrew/lib
-    # Fallback paths
-    ifneq ($(HOMEBREW_PREFIX),)
-        ARM64_INCLUDE_PATHS += -I$(HOMEBREW_PREFIX)/include
-        ARM64_LIB_PATHS += -L$(HOMEBREW_PREFIX)/lib
-    endif
-    CFLAGS = -std=c++11 -arch arm64 $(ARM64_INCLUDE_PATHS)
-    LDFLAGS = -arch arm64 $(ARM64_LIB_PATHS) -lglfw -framework Cocoa -framework OpenGL -framework IOKit
+    CFLAGS = -std=c++11 -arch arm64 -I/opt/homebrew/include
+    LDFLAGS = -arch arm64 -L/opt/homebrew/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit
 else ifeq ($(ARCH),x86_64)
-    # Primary paths for x86_64
-    X86_INCLUDE_PATHS = -I/usr/local/include
-    X86_LIB_PATHS = -L/usr/local/lib
-    # Fallback paths for CI environments
-    ifneq ($(HOMEBREW_PREFIX),)
-        X86_INCLUDE_PATHS += -I$(HOMEBREW_PREFIX)/include
-        X86_LIB_PATHS += -L$(HOMEBREW_PREFIX)/lib
-    endif
-    # Additional common locations
-    X86_INCLUDE_PATHS += -I/usr/local/Cellar/glfw/*/include
-    X86_LIB_PATHS += -L/usr/local/Cellar/glfw/*/lib
-    CFLAGS = -std=c++11 -arch x86_64 $(X86_INCLUDE_PATHS)
-    LDFLAGS = -arch x86_64 $(X86_LIB_PATHS) -lglfw -framework Cocoa -framework OpenGL -framework IOKit
+    # For local development, use Intel Homebrew paths
+    # For CI on Apple Silicon runners, this will be overridden by environment
+    CFLAGS = -std=c++11 -arch x86_64 -I/usr/local/include
+    LDFLAGS = -arch x86_64 -L/usr/local/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit
 else
-    # Fallback to native architecture homebrew paths
+    # Fallback to native architecture
     ifeq ($(shell uname -m),arm64)
         CFLAGS = -std=c++11 -I/opt/homebrew/include
         LDFLAGS = -L/opt/homebrew/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit
@@ -78,7 +59,7 @@ universal: clean
 	@cp -r $(RESOURCES)* build/arm64/$(APP_NAME).app/Contents/Resources/
 	@cp $(PLIST) build/arm64/$(APP_NAME).app/Contents/
 	
-	# Build x86_64 version
+	# Build x86_64 version using local Intel Homebrew
 	clang++ $(SRC) -std=c++11 -arch x86_64 -I/usr/local/include -arch x86_64 -L/usr/local/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit -o build/x86_64/$(APP_NAME).app/Contents/MacOS/$(BINARY)
 	@cp -r $(RESOURCES)* build/x86_64/$(APP_NAME).app/Contents/Resources/
 	@cp $(PLIST) build/x86_64/$(APP_NAME).app/Contents/
