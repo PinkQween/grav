@@ -26,18 +26,39 @@ jobs:
         # GitHub Actions macos-latest now uses Apple Silicon runners
         # So Homebrew will be at /opt/homebrew by default
         
-        # Install GLFW using the default Homebrew
-        echo "📦 Installing GLFW..."
-        brew install glfw
-        
-        # Verify installation 
-        echo "🔍 Verifying GLFW installation:"
-        ls -la /opt/homebrew/include/ | grep GLFW || echo "GLFW headers not found"
-        ls -la /opt/homebrew/lib/ | grep glfw || echo "GLFW library not found"
-        
-        # Check which architecture GLFW was built for
-        if [ -f "/opt/homebrew/lib/libglfw.dylib" ]; then
-          echo "GLFW architecture: $(lipo -info /opt/homebrew/lib/libglfw.dylib)"
+        if [ "${{ matrix.arch }}" = "x86_64" ] && [ "$(uname -m)" = "arm64" ]; then
+          echo "📦 Setting up x86_64 GLFW on Apple Silicon runner..."
+          
+          # Install Rosetta 2 for x86_64 emulation
+          sudo softwareupdate --install-rosetta --agree-to-license || echo "Rosetta already installed"
+          
+          # Install x86_64 Homebrew under Rosetta
+          echo "Installing x86_64 Homebrew..."
+          arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || echo "x86_64 Homebrew may already exist"
+          
+          # Install GLFW for x86_64
+          echo "Installing x86_64 GLFW..."
+          arch -x86_64 /usr/local/bin/brew install glfw
+          
+          # Verify x86_64 GLFW installation
+          echo "🔍 Verifying x86_64 GLFW:"
+          if [ -f "/usr/local/lib/libglfw.dylib" ]; then
+            echo "x86_64 GLFW architecture: $(lipo -info /usr/local/lib/libglfw.dylib)"
+          fi
+          
+        else
+          echo "📦 Installing native GLFW..."
+          brew install glfw
+          
+          # Verify installation 
+          echo "🔍 Verifying GLFW installation:"
+          ls -la /opt/homebrew/include/ | grep GLFW || echo "GLFW headers not found"
+          ls -la /opt/homebrew/lib/ | grep glfw || echo "GLFW library not found"
+          
+          # Check which architecture GLFW was built for
+          if [ -f "/opt/homebrew/lib/libglfw.dylib" ]; then
+            echo "GLFW architecture: $(lipo -info /opt/homebrew/lib/libglfw.dylib)"
+          fi
         fi
     
     - name: Build for ${{ matrix.arch }}
@@ -46,27 +67,39 @@ jobs:
         
         # For x86_64 builds on Apple Silicon CI runners, we need special handling
         if [ "${{ matrix.arch }}" = "x86_64" ] && [ "$(uname -m)" = "arm64" ]; then
-          echo "💻 Building x86_64 on Apple Silicon runner - using manual compilation..."
+          echo "💻 Building x86_64 on Apple Silicon runner - using x86_64 GLFW..."
           
-          # Build manually for x86_64 using available arm64 headers but cross-compiling
+          # Build manually for x86_64 using x86_64 GLFW libraries
           mkdir -p Grav.app/Contents/MacOS
           mkdir -p Grav.app/Contents/Resources
           
           clang++ main.cpp \
             -std=c++11 \
             -arch x86_64 \
-            -I/opt/homebrew/include \
-            -L/opt/homebrew/lib \
+            -I/usr/local/include \
+            -L/usr/local/lib \
             -lglfw \
             -framework Cocoa \
             -framework OpenGL \
             -framework IOKit \
             -o Grav.app/Contents/MacOS/grav || {
-            echo "❌ x86_64 build with GLFW failed, trying system frameworks only..."
+            echo "❌ x86_64 build with x86_64 GLFW failed, trying static linking..."
             
-            # If GLFW linking fails, we might need to build without it for CI
-            echo "This indicates a CI environment limitation."
-            exit 1
+            # Fallback 1: Try static linking
+            clang++ main.cpp \
+              -std=c++11 \
+              -arch x86_64 \
+              -I/usr/local/include \
+              -L/usr/local/lib \
+              /usr/local/lib/libglfw3.a \
+              -framework Cocoa \
+              -framework OpenGL \
+              -framework IOKit \
+              -o Grav.app/Contents/MacOS/grav || {
+              echo "❌ Static linking also failed. GLFW x86_64 libraries not properly installed."
+              echo "This indicates a CI environment limitation."
+              exit 1
+            }
           }
           
           # Copy resources
