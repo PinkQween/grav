@@ -17,91 +17,63 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Install dependencies
+    - name: Setup Dependencies
       run: |
-        # Install Homebrew if not present
-        if ! command -v brew &> /dev/null; then
-          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        fi
+        echo "🚀 Setting up dependencies for ${{ matrix.arch }} build..."
         
-        # Install clang++ and glfw for the specific architecture
+        # GitHub Actions runners are typically x86_64, but we need both Homebrews
+        # Install Apple Silicon Homebrew for arm64 builds
         if [ "${{ matrix.arch }}" = "arm64" ]; then
-          arch -arm64 brew install glfw
+          # Install Apple Silicon Homebrew if not present
+          if [ ! -d "/opt/homebrew" ]; then
+            echo "📦 Installing Apple Silicon Homebrew..."
+            sudo mkdir -p /opt/homebrew
+            sudo chown -R $(whoami) /opt/homebrew
+            curl -L https://github.com/Homebrew/brew/tarball/master | tar xz --strip 1 -C /opt/homebrew
+          fi
+          
+          echo "📦 Installing GLFW for arm64..."
+          /opt/homebrew/bin/brew install glfw || echo "GLFW may already be installed"
+          
         else
-          arch -x86_64 brew install glfw
+          # Install Intel Homebrew for x86_64 builds
+          if [ ! -d "/usr/local/Homebrew" ]; then
+            echo "📦 Installing Intel Homebrew..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          
+          echo "📦 Installing GLFW for x86_64..."
+          /usr/local/bin/brew install glfw || brew install glfw
         fi
     
     - name: Build for ${{ matrix.arch }}
       run: |
-        # Set architecture-specific compiler and linker flags
-        if [ "${{ matrix.arch }}" = "arm64" ]; then
-          export CFLAGS="-arch arm64 -I/opt/homebrew/include"
-          export LDFLAGS="-arch arm64 -L/opt/homebrew/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit"
-          export CC="clang++ -arch arm64"
-        else
-          export CFLAGS="-arch x86_64 -I/usr/local/include"
-          export LDFLAGS="-arch x86_64 -L/usr/local/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit"
-          export CC="clang++ -arch x86_64"
-        fi
+        echo "🔨 Building for ${{ matrix.arch }}..."
         
-        # Create output directory
-        mkdir -p build/${{ matrix.arch }}
+        # Use the Makefile which handles all the architecture-specific logic
+        make clean
+        make ARCH=${{ matrix.arch }}
         
-        # Build the application
-        $CC main.cpp $CFLAGS $LDFLAGS -o build/${{ matrix.arch }}/grav
+        # Verify the build
+        echo "🔍 Verifying build:"
+        file Grav.app/Contents/MacOS/grav
         
-        # Create app bundle for macOS
-        mkdir -p build/${{ matrix.arch }}/Grav.app/Contents/MacOS
-        mkdir -p build/${{ matrix.arch }}/Grav.app/Contents/Resources
+        # Create distribution package
+        make package ARCH=${{ matrix.arch }}
         
-        # Copy binary and resources
-        cp build/${{ matrix.arch }}/grav build/${{ matrix.arch }}/Grav.app/Contents/MacOS/
-        cp -r Resources/* build/${{ matrix.arch }}/Grav.app/Contents/Resources/ 2>/dev/null || true
-        cp Info.plist build/${{ matrix.arch }}/Grav.app/Contents/ 2>/dev/null || true
-        
-        # Create a zip archive for distribution
-        cd build/${{ matrix.arch }}
-        zip -r ../../grav-${{ matrix.arch }}.zip Grav.app
-        cd ../..
-        
-        # Also create a standalone binary zip
-        zip grav-${{ matrix.arch }}-binary.zip build/${{ matrix.arch }}/grav
+        # Also create a standalone binary package
+        mkdir -p dist
+        zip -j dist/grav-${{ matrix.arch }}-binary.zip Grav.app/Contents/MacOS/grav
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: grav-${{ matrix.arch }}
         path: |
-          grav-${{ matrix.arch }}.zip
-          grav-${{ matrix.arch }}-binary.zip
-    
-    - name: Create Release (if on main/master)
-      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: v${{ github.run_number }}-${{ github.sha }}
-        name: "Grav Build ${{ github.run_number }}"
-        body: |
-          Automated build from commit ${{ github.sha }}
-          
-          ## Downloads
-          - **Apple Silicon (M1/M2/M3 Macs)**: `grav-arm64.zip` or `grav-arm64-binary.zip`
-          - **Intel Macs**: `grav-x86_64.zip` or `grav-x86_64-binary.zip`
-          
-          ## Installation
-          1. Download the appropriate zip file for your Mac architecture
-          2. Extract the zip file
-          3. For the app bundle (.app), drag to Applications folder
-          4. For the binary, place in your PATH or run directly
-        files: |
-          grav-${{ matrix.arch }}.zip
-          grav-${{ matrix.arch }}-binary.zip
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          dist/grav-${{ matrix.arch }}.zip
+          dist/grav-${{ matrix.arch }}-binary.zip
 
-  combine-release:
+  create-release:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     needs: build-and-release
     runs-on: ubuntu-latest
@@ -109,29 +81,120 @@ jobs:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       
-    - name: Create Universal Release
+    - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: v${{ github.run_number }}-universal
-        name: "Grav Universal Build ${{ github.run_number }}"
+        tag_name: v${{ github.run_number }}-${{ github.sha }}
+        name: "Grav Build ${{ github.run_number }}"
         body: |
-          Universal build from commit ${{ github.sha }}
+          🚀 Automated build from commit [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
           
-          This release contains binaries for both Apple Silicon and Intel Macs.
+          ## 📦 Downloads
           
-          ## Downloads
-          - **Apple Silicon (M1/M2/M3 Macs)**: Download files containing `arm64`
-          - **Intel Macs**: Download files containing `x86_64`
+          ### 🌍 Universal Binaries (Recommended - Works on All Macs)
+          - **Universal App Bundle**: `grav-universal.zip` 
+          - **Universal Binary**: `grav-universal-binary.zip`
           
-          ## Installation
-          1. Download the appropriate zip file for your Mac architecture
-          2. Extract the zip file
-          3. For the app bundle (.app), drag to Applications folder
-          4. For the binary, place in your PATH or run directly
+          ### Architecture-Specific Builds
+          
+          #### App Bundles (.app)
+          - **🍎 Apple Silicon (M1/M2/M3/M4 Macs)**: `grav-arm64.zip`
+          - **💻 Intel Macs**: `grav-x86_64.zip`
+          
+          #### Standalone Binaries
+          - **🍎 Apple Silicon**: `grav-arm64-binary.zip`
+          - **💻 Intel**: `grav-x86_64-binary.zip`
+          
+          ## 🛠️ Installation
+          
+          ### Universal App (Easiest):
+          1. Download `grav-universal.zip`
+          2. Extract and drag `Grav.app` to Applications
+          3. Works on any Mac (Apple Silicon or Intel)
+          
+          ### Architecture-Specific Installation:
+          1. [Check your architecture](#-architecture-detection) first
+          2. Download the appropriate `.zip` file
+          3. Extract and drag `Grav.app` to Applications folder
+          4. Double-click to run or use `open Grav.app` from terminal
+          
+          ### Binary Installation:
+          1. Download the appropriate `-binary.zip` file (or universal)
+          2. Extract to get the `grav` executable
+          3. Place in your PATH or run directly: `./grav`
+          
+          ## 🔍 Architecture Detection
+          ```bash
+          uname -m  # Returns: arm64 (Apple Silicon) or x86_64 (Intel)
+          ```
         files: |
           grav-arm64/*.zip
           grav-x86_64/*.zip
         draft: false
         prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-universal:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    runs-on: macos-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Dependencies for Universal Build
+      run: |
+        echo "🌍 Setting up dependencies for universal build..."
+        
+        # Install both Homebrews for universal build
+        # Apple Silicon Homebrew
+        if [ ! -d "/opt/homebrew" ]; then
+          echo "📦 Installing Apple Silicon Homebrew..."
+          sudo mkdir -p /opt/homebrew
+          sudo chown -R $(whoami) /opt/homebrew
+          curl -L https://github.com/Homebrew/brew/tarball/master | tar xz --strip 1 -C /opt/homebrew
+        fi
+        /opt/homebrew/bin/brew install glfw || echo "GLFW arm64 may already be installed"
+        
+        # Intel Homebrew
+        if [ ! -d "/usr/local/Homebrew" ]; then
+          echo "📦 Installing Intel Homebrew..."
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+        /usr/local/bin/brew install glfw || brew install glfw || echo "GLFW x86_64 may already be installed"
+    
+    - name: Build Universal Binary
+      run: |
+        echo "🌍 Building universal binary..."
+        
+        # Use the Makefile's universal target
+        make universal
+        
+        # Verify it's actually universal
+        echo "🔍 Verifying universal build:"
+        lipo -info Grav.app/Contents/MacOS/grav
+        
+        # Package universal build
+        make package-universal
+        
+        # Create standalone universal binary
+        mkdir -p dist
+        zip -j dist/grav-universal-binary.zip Grav.app/Contents/MacOS/grav
+    
+    - name: Upload universal artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: grav-universal
+        path: |
+          dist/grav-universal.zip
+          dist/grav-universal-binary.zip
+    
+    - name: Add to main release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ github.run_number }}-${{ github.sha }}
+        files: |
+          dist/grav-universal.zip
+          dist/grav-universal-binary.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

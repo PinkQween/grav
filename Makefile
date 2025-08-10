@@ -6,16 +6,24 @@ SRC = main.cpp
 ARCH ?= $(shell uname -m)
 
 # Architecture-specific flags
+# We now have GLFW installed for both architectures:
+# - arm64: /opt/homebrew (Apple Silicon Homebrew)
+# - x86_64: /usr/local (Intel Homebrew via Rosetta)
 ifeq ($(ARCH),arm64)
-    CFLAGS = -arch arm64 -I/opt/homebrew/include
+    CFLAGS = -std=c++11 -arch arm64 -I/opt/homebrew/include
     LDFLAGS = -arch arm64 -L/opt/homebrew/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit
 else ifeq ($(ARCH),x86_64)
-    CFLAGS = -arch x86_64 -I/usr/local/include
+    CFLAGS = -std=c++11 -arch x86_64 -I/usr/local/include
     LDFLAGS = -arch x86_64 -L/usr/local/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit
 else
-    # Fallback to homebrew paths for unknown architectures
-    CFLAGS = -I/opt/homebrew/include
-    LDFLAGS = -L/opt/homebrew/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit
+    # Fallback to native architecture homebrew paths
+    ifeq ($(shell uname -m),arm64)
+        CFLAGS = -std=c++11 -I/opt/homebrew/include
+        LDFLAGS = -L/opt/homebrew/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit
+    else
+        CFLAGS = -std=c++11 -I/usr/local/include
+        LDFLAGS = -L/usr/local/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit
+    endif
 endif
 
 RESOURCES = Resources/
@@ -42,9 +50,20 @@ x86_64:
 
 # Build universal binary (requires both architectures)
 universal: clean
-	@mkdir -p build/arm64 build/x86_64
-	$(MAKE) ARCH=arm64 APP_NAME=build/arm64/$(APP_NAME)
-	$(MAKE) ARCH=x86_64 APP_NAME=build/x86_64/$(APP_NAME)
+	@mkdir -p build/arm64/$(APP_NAME).app/Contents/MacOS build/arm64/$(APP_NAME).app/Contents/Resources
+	@mkdir -p build/x86_64/$(APP_NAME).app/Contents/MacOS build/x86_64/$(APP_NAME).app/Contents/Resources
+	
+	# Build arm64 version
+	clang++ $(SRC) -std=c++11 -arch arm64 -I/opt/homebrew/include -arch arm64 -L/opt/homebrew/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit -o build/arm64/$(APP_NAME).app/Contents/MacOS/$(BINARY)
+	@cp -r $(RESOURCES)* build/arm64/$(APP_NAME).app/Contents/Resources/
+	@cp $(PLIST) build/arm64/$(APP_NAME).app/Contents/
+	
+	# Build x86_64 version
+	clang++ $(SRC) -std=c++11 -arch x86_64 -I/usr/local/include -arch x86_64 -L/usr/local/lib -lglfw -framework Cocoa -framework OpenGL -framework IOKit -o build/x86_64/$(APP_NAME).app/Contents/MacOS/$(BINARY)
+	@cp -r $(RESOURCES)* build/x86_64/$(APP_NAME).app/Contents/Resources/
+	@cp $(PLIST) build/x86_64/$(APP_NAME).app/Contents/
+	
+	# Create universal app bundle
 	@mkdir -p $(APP_NAME).app/Contents/MacOS
 	@mkdir -p $(APP_NAME).app/Contents/Resources
 	lipo -create -output $(APP_NAME).app/Contents/MacOS/$(BINARY) \
